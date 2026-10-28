@@ -1041,7 +1041,7 @@ mod tests {
 
     use super::{bucket_upload_url, Auth, ZenodoClient};
     use crate::ids::BucketUrl;
-    use crate::{Endpoint, PollOptions, RecordId, ZenodoError};
+    use crate::{Endpoint, PollOptions, RecordId, RecordQuery, ZenodoError};
     use axum::extract::State;
     use axum::http::StatusCode;
     use axum::routing::get;
@@ -1385,5 +1385,48 @@ mod tests {
         }
 
         server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Zenodo API"]
+    async fn live_search_deserializes_many_records() -> Result<(), ZenodoError> {
+        let client = ZenodoClient::anonymous()?;
+
+        for page_number in 1..=10 {
+            let query = RecordQuery::builder()
+                .published()
+                .most_recent()
+                .page(page_number)
+                .size(20)
+                .build();
+
+            let page = client.search_records(&query).await?;
+
+            assert!(!page.hits.is_empty());
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Zenodo API"]
+    async fn live_smiles_search_deserializes_records() -> Result<(), ZenodoError> {
+        let client = ZenodoClient::anonymous()?;
+
+        for page_number in 1..=10 {
+            let query = RecordQuery::builder()
+                .query("smiles")
+                .published()
+                .most_recent()
+                .page(page_number)
+                .size(20)
+                .build();
+
+            let page = client.search_records(&query).await?;
+
+            assert!(!page.hits.is_empty());
+        }
+
+        Ok(())
     }
 }

@@ -528,8 +528,12 @@ impl RecordIdentifierBuilder {
 /// Date entry attached to a published record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RecordDate {
-    /// Date value exactly as reported by Zenodo.
-    pub date: String,
+    /// Start of the date interval, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    /// End of the date interval, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
     /// Date type label, when present.
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub type_: Option<String>,
@@ -547,34 +551,31 @@ impl RecordDate {
     pub fn builder() -> RecordDateBuilder {
         RecordDateBuilder::default()
     }
-
-    /// Creates a record date entry with only the required date field.
-    #[must_use]
-    pub fn new(date: impl Into<String>) -> Self {
-        Self {
-            date: date.into(),
-            ..Self::default()
-        }
-    }
 }
 
 /// Builder for [`RecordDate`] values.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct RecordDateBuilder {
-    date: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
     date_type: Option<String>,
     description: Option<String>,
     extra: BTreeMap<String, Value>,
 }
 
 impl RecordDateBuilder {
-    /// Sets the raw date value.
+    /// Sets the interval start.
     #[must_use]
-    pub fn date(mut self, date: impl Into<String>) -> Self {
-        self.date = Some(date.into());
+    pub fn start(mut self, start: impl Into<String>) -> Self {
+        self.start = Some(start.into());
         self
     }
-
+    /// Sets the interval end.
+    #[must_use]
+    pub fn end(mut self, end: impl Into<String>) -> Self {
+        self.end = Some(end.into());
+        self
+    }
     /// Sets the Zenodo date type label.
     #[must_use]
     pub fn date_type(mut self, date_type: impl Into<String>) -> Self {
@@ -609,8 +610,13 @@ impl RecordDateBuilder {
     ///
     /// Returns an error if the required `date` field is missing.
     pub fn build(self) -> Result<RecordDate, MetadataEntryBuildError> {
+        if self.start.is_none() && self.end.is_none() {
+            return Err(MetadataEntryBuildError::MissingField { entry: "RecordDate", field: "start or end" })
+        }
+
         Ok(RecordDate {
-            date: required_entry_field(self.date, "RecordDate", "date")?,
+            start: self.start,
+            end: self.end,
             type_: self.date_type,
             description: self.description,
             extra: self.extra,
@@ -1754,7 +1760,7 @@ mod tests {
             .build()
             .unwrap();
         let date = RecordDate::builder()
-            .date("2026-04-03")
+            .start("2026-04-03")
             .date_type("Collected")
             .description("Sampling day")
             .build()
@@ -1786,6 +1792,8 @@ mod tests {
         assert_eq!(subject.term, "chemistry");
         assert_eq!(identifier.scheme.as_deref(), Some("doi"));
         assert_eq!(date.type_.as_deref(), Some("Collected"));
+        assert_eq!(date.start.as_deref(), Some("2026-04-03"));
+        assert_eq!(date.end, None);
         assert_eq!(related.resource_type.as_deref(), Some("dataset"));
         assert_eq!(community.identifier, "zenodo");
         assert_eq!(grant.id, "grant-1");
@@ -1877,14 +1885,16 @@ mod tests {
         let mut date_extra = std::collections::BTreeMap::new();
         date_extra.insert("certainty".into(), json!("exact"));
         let date = RecordDate::builder()
-            .date("2026-04-03")
+            .start("2026-04-03")
+            .end("2026-04-04")
             .date_type("Collected")
             .description("Sampling day")
             .extra(date_extra)
             .extra_field("timezone", json!("UTC"))
             .build()
             .unwrap();
-        assert_eq!(RecordDate::new("2026-04-04").date, "2026-04-04");
+        assert_eq!(date.start.as_deref(), Some("2026-04-03"));
+        assert_eq!(date.end.as_deref(), Some("2026-04-04"));
         assert_eq!(date.extra.get("certainty"), Some(&json!("exact")));
         assert_eq!(date.extra.get("timezone"), Some(&json!("UTC")));
     }
