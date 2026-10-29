@@ -239,8 +239,8 @@ pub struct Contributor {
     /// Full contributor name in Zenodo's expected display form.
     pub name: String,
     /// Contributor role label as reported by Zenodo.
-    #[serde(rename = "type")]
-    pub type_: String,
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
     /// Affiliation for the contributor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub affiliation: Option<String>,
@@ -267,7 +267,7 @@ impl Contributor {
     pub fn new(name: impl Into<String>, role: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            type_: role.into(),
+            type_: Some(role.into()),
             ..Self::default()
         }
     }
@@ -342,7 +342,7 @@ impl ContributorBuilder {
     pub fn build(self) -> Result<Contributor, MetadataEntryBuildError> {
         Ok(Contributor {
             name: required_entry_field(self.name, "Contributor", "name")?,
-            type_: required_entry_field(self.role, "Contributor", "role")?,
+            type_: Some(required_entry_field(self.role, "Contributor", "role")?),
             affiliation: self.affiliation,
             orcid: self.orcid,
             gnd: self.gnd,
@@ -862,8 +862,9 @@ impl CommunityRefBuilder {
 /// Reference to a Zenodo grant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct GrantRef {
-    /// Grant identifier.
-    pub id: String,
+    /// Grant identifier, if provided by Zenodo
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Additional untyped fields preserved for forward compatibility.
     #[serde(flatten, default)]
     pub extra: BTreeMap<String, Value>,
@@ -884,12 +885,12 @@ impl GrantRef {
     /// use zenodo_rs::GrantRef;
     ///
     /// let grant = GrantRef::new("grant-1");
-    /// assert_eq!(grant.id, "grant-1");
+    /// assert_eq!(grant.id, Some("grant-1".to_string()));
     /// ```
     #[must_use]
     pub fn new(id: impl Into<String>) -> Self {
         Self {
-            id: id.into(),
+            id: Some(id.into()),
             ..Self::default()
         }
     }
@@ -931,7 +932,7 @@ impl GrantRefBuilder {
     /// Returns an error if the required `id` field is missing.
     pub fn build(self) -> Result<GrantRef, MetadataEntryBuildError> {
         Ok(GrantRef {
-            id: required_entry_field(self.id, "GrantRef", "id")?,
+            id: Some(required_entry_field(self.id, "GrantRef", "id")?),
             extra: self.extra,
         })
     }
@@ -1788,7 +1789,7 @@ mod tests {
             .build();
 
         assert_eq!(creator.name, "Doe, Jane");
-        assert_eq!(contributor.type_, "DataManager");
+        assert_eq!(contributor.type_, Some("DataManager".to_string()));
         assert_eq!(subject.term, "chemistry");
         assert_eq!(identifier.scheme.as_deref(), Some("doi"));
         assert_eq!(date.type_.as_deref(), Some("Collected"));
@@ -1796,7 +1797,7 @@ mod tests {
         assert_eq!(date.end, None);
         assert_eq!(related.resource_type.as_deref(), Some("dataset"));
         assert_eq!(community.identifier, "zenodo");
-        assert_eq!(grant.id, "grant-1");
+        assert_eq!(grant.id, Some("grant-1".to_string()));
         assert_eq!(license.id.as_deref(), Some("cc-by-4.0"));
         assert_eq!(resource_type.type_.as_deref(), Some("dataset"));
     }
@@ -1830,7 +1831,7 @@ mod tests {
             .extra_field("y", json!(2))
             .build()
             .unwrap();
-        assert_eq!(Contributor::new("Ada", "Supervisor").type_, "Supervisor");
+        assert_eq!(Contributor::new("Ada", "Supervisor").type_, Some("Supervisor".to_string()));
         assert_eq!(contributor.extra.get("x"), Some(&json!(1)));
         assert_eq!(contributor.extra.get("y"), Some(&json!(2)));
 
@@ -1921,7 +1922,7 @@ mod tests {
             .extra_field("call", json!("Horizon"))
             .build()
             .unwrap();
-        assert_eq!(GrantRef::new("grant-2").id, "grant-2");
+        assert_eq!(GrantRef::new("grant-2").id, Some("grant-2".to_string()));
         assert_eq!(grant.extra.get("agency"), Some(&json!("EU")));
         assert_eq!(grant.extra.get("call"), Some(&json!("Horizon")));
 
@@ -1972,7 +1973,7 @@ mod tests {
 
         assert_eq!(metadata.creators[0].name, "Doe, Jane");
         assert_eq!(metadata.communities[0].identifier, "zenodo");
-        assert_eq!(metadata.grants[0].id, "grant-1");
+        assert_eq!(metadata.grants[0].id, Some("grant-1".to_string()));
     }
 
     #[test]
@@ -2080,7 +2081,7 @@ mod tests {
             metadata.contributors,
             vec![Contributor {
                 name: "Doe, John".into(),
-                type_: "Editor".into(),
+                type_: Some("Editor".into()),
                 affiliation: None,
                 orcid: None,
                 gnd: None,
