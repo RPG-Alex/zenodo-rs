@@ -1173,6 +1173,16 @@ pub struct DepositMetadataUpdate {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Variants of possible date specificity supplied by Zenodo.
+pub enum PublicationDate {
+    /// Only the year is provided.
+    Year(i32),
+    /// Only the year and month are provided. 
+    YearMonth(i32, u32),
+    /// A complete date is provided.
+    Full(Date)
+}
+
 /// Errors raised while building [`DepositMetadataUpdate`] values.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum DepositMetadataBuildError {
