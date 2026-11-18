@@ -1193,6 +1193,10 @@ enum Precision {
 }
 
 impl DatePrecision {
+    /// Creates a new `DateDecision` with given [`Precision`]
+    ///
+    /// # Errors
+    /// - Will return invalid if date is not valid form.
     fn new(
         year: i16,
         month: i8,
@@ -1207,26 +1211,32 @@ impl DatePrecision {
         Ok(Self { date, precision })
     }
 
+    /// Creates a `DatePrecision` from only the year.
     pub fn from_year(year: i16) -> Result<Self, PublicationDateError> {
         Self::new(year, 1, 1, Precision::Year)
     }
 
+    /// Creates a `DatePrecision` from the year and month, but no day.
     pub fn from_year_month(year: i16, month: i8) -> Result<Self, PublicationDateError> {
         Self::new(year, month, 1, Precision::YearMonth)
     }
 
+    /// Creates a `DatePrecision` from complete [`Date`].
     pub fn from_date(date: Date) -> Result<Self, PublicationDateError> {
         Self::new(date.year(), date.month(), date.day(), Precision::Day)
     }
 
+    /// Returns the `DatePrecision` year.
     pub fn year(&self) -> i16 {
         self.date.year()
     }
 
+    /// Returns the `DatePrecision` month, if present.
     pub fn month(&self) -> Option<i8> {
         (self.precision != Precision::Year).then(|| self.date.month())
     }
 
+    /// Returns the `DatePrecision` day, if present.
     pub fn day(&self) -> Option<i8> {
         (self.precision == Precision::Day).then(|| self.date.day())
     }
@@ -1240,13 +1250,12 @@ impl FromStr for DatePrecision {
         match s.split('-').collect::<Vec<_>>().as_slice() {
             [year] => {
                 let year = year.parse::<i16>().map_err(|_| invalid())?;
-                Self::from_year(year)
+                Self::from_year(year).map_err(|_| invalid())
             }
             [year, month] => {
                 let year = year.parse::<i16>().map_err(|_| invalid())?;
                 let month = month.parse::<i8>().map_err(|_| invalid())?;
-
-                Self::from_year_month(year, month)
+                Self::from_year_month(year, month).map_err(|_| invalid())
             }
             [year, month, day] => {
                 let year = year.parse::<i16>().map_err(|_| invalid())?;
@@ -1254,8 +1263,7 @@ impl FromStr for DatePrecision {
                 let day = day.parse::<i8>().map_err(|_| invalid())?;
 
                 let date = Date::new(year, month, day).map_err(|_| invalid())?;
-
-                Self::from_date(date)
+                Self::from_date(date).map_err(|_| invalid())
             }
 
             _ => Err(invalid()),
@@ -2296,6 +2304,12 @@ mod tests {
             metadata.thesis_university.as_deref(),
             Some("Example University")
         );
+        assert_eq!(
+            metadata.publication_date,
+            Some(PublicationDate::Date(
+                DatePrecision::from_date(Date::new(2026, 4, 3).unwrap()).unwrap()
+            ))
+        );
     }
 
     #[test]
@@ -2378,7 +2392,9 @@ mod tests {
 
         assert_eq!(
             metadata.publication_date,
-            Some(PublicationDate::Date(DatePrecision::from_year_month(2018, 9).unwrap()))
+            Some(PublicationDate::Date(
+                DatePrecision::from_year_month(2018, 9).unwrap()
+            ))
         );
 
         assert_eq!(metadata.dates[0].start.as_deref(), Some("2026-01-01"));
@@ -2417,9 +2433,9 @@ mod tests {
 
         assert_eq!(
             "2026-11".parse::<DatePrecision>().unwrap(),
-            DatePrecision::from_year_month(2026, 11)?
+            DatePrecision::from_year_month(2026, 11).unwrap()
         );
-
+        assert_eq!("2026-11".parse::<DatePrecision>().unwrap().day(), None);
         assert_eq!(
             "2026-11-06".parse::<DatePrecision>().unwrap(),
             DatePrecision::from_date(Date::new(2026, 11, 6).unwrap()).unwrap()
@@ -2486,11 +2502,61 @@ mod tests {
             "2020/2021/2022",
             "2020-13/2021",
             "2020/2021-02-30",
+            "-1",
+            "10000",
+            "2026-00",
+            "2026-00-01",
+            "2026-02-29",
+            "2026-11-00",
+            "2026-11-32",
         ] {
             assert_eq!(
                 input.parse::<PublicationDate>(),
                 Err(super::PublicationDateError::Invalid(input.to_owned())),
             );
+        }
+    }
+
+    #[test]
+    fn date_precision_rejects_invalid_construction() {
+        assert!(DatePrecision::from_year(-1).is_err());
+        assert!(DatePrecision::from_year_month(2026, 13).is_err());
+        assert!(DatePrecision::from_year_month(2026, 0).is_err());
+        assert!(DatePrecision::from_year(9999).is_ok());
+        assert!(DatePrecision::from_date(Date::new(-1, 1, 1).unwrap()).is_err());
+    }
+
+    #[test]
+    fn date_precision_accessors() {
+        let year = DatePrecision::from_year(2026).unwrap();
+        assert_eq!(year.year(), 2026);
+        assert_eq!(year.month(), None);
+        assert_eq!(year.day(), None);
+
+        let year_month = DatePrecision::from_year_month(2026, 11).unwrap();
+        assert_eq!(year_month.year(), 2026);
+        assert_eq!(year_month.month(), Some(11));
+        assert_eq!(year_month.day(), None);
+
+        let full = DatePrecision::from_date(Date::new(2026, 11, 6).unwrap()).unwrap();
+        assert_eq!(full.year(), 2026);
+        assert_eq!(full.month(), Some(11));
+        assert_eq!(full.day(), Some(6));
+    }
+
+    #[test]
+    fn date_precision_constructed_values_roundtrip() {
+        let dates = [
+            DatePrecision::from_year(2026).unwrap(),
+            DatePrecision::from_year_month(2026, 11).unwrap(),
+            DatePrecision::from_date(Date::new(2026, 11, 6).unwrap()).unwrap(),
+        ];
+
+        for original in dates {
+            let formatted = original.to_string();
+            let parsed: DatePrecision = formatted.parse().unwrap();
+
+            assert_eq!(parsed, original);
         }
     }
 }
