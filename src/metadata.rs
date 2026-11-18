@@ -1178,48 +1178,57 @@ pub struct DepositMetadataUpdate {
 
 /// Variants of possible date specificity supplied by Zenodo.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DatePrecision {
+pub struct DatePrecision {
     /// Only the year is provided.
-    Year(i32),
-    /// Only the year and month are provided.
-    YearMonth(i32, u32),
-    /// A complete date is provided.
-    Full(Date)
+    date: Date,
+    precision: Precision,
+}
+
+/// Demarcates the level of precision provided for a Date
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Precision {
+    Year,
+    YearMonth,
+    Day,
 }
 
 impl DatePrecision {
-    /// Returns the Publication Date's year
-    #[must_use]
-    pub fn year(&self) -> i32 {
-        match self {
-            Self::Year(year) | Self::YearMonth(year, _) => *year,
-            Self::Full(date) => date.year(),
+    fn new(
+        year: i16,
+        month: i8,
+        day: i8,
+        precision: Precision,
+    ) -> Result<Self, PublicationDateError> {
+        let invalid = || PublicationDateError::Invalid(format!("{year:04}-{month:02}-{day:02}"));
+        if !(0..=9999).contains(&year) {
+            return Err(invalid());
         }
+        let date = Date::new(year, month, day).map_err(|_| invalid())?;
+        Ok(Self { date, precision })
     }
-    /// Returns the Publication Date's month if present.
-    #[must_use]
-    pub fn month(&self) -> Option<u32> {
-        match self {
-            Self::Year(_) => None,
-            Self::YearMonth(_, month) => Some(*month),
-            Self::Full(date) => Some(date.month()),
-        }
+
+    pub fn from_year(year: i16) -> Result<Self, PublicationDateError> {
+        Self::new(year, 1, 1, Precision::Year)
     }
-    /// Returns the Publication Date's day, if present.
-    #[must_use]
-    pub fn day(&self) -> Option<u32> {
-        match self {
-            Self::Full(date) => Some(date.day()),
-            _ => None,
-        }
+
+    pub fn from_year_month(year: i16, month: i8) -> Result<Self, PublicationDateError> {
+        Self::new(year, month, 1, Precision::YearMonth)
     }
-    /// Converts the Publication Date to [`NaiveDate`] if possible.
-    #[must_use]
-    pub fn try_naive(&self) -> Option<NaiveDate> {
-        match self {
-            Self::Full(date) => Some(*date),
-            _ => None,
-        }
+
+    pub fn from_date(date: Date) -> Result<Self, PublicationDateError> {
+        Self::new(date.year(), date.month(), date.day(), Precision::Day)
+    }
+
+    pub fn year(&self) -> i16 {
+        self.date.year()
+    }
+
+    pub fn month(&self) -> Option<i8> {
+        (self.precision != Precision::Year).then(|| self.date.month())
+    }
+
+    pub fn day(&self) -> Option<i8> {
+        (self.precision == Precision::Day).then(|| self.date.day())
     }
 }
 
@@ -1230,25 +1239,23 @@ impl FromStr for DatePrecision {
 
         match s.split('-').collect::<Vec<_>>().as_slice() {
             [year] => {
-                let year = year.parse::<i32>().map_err(|_| invalid())?;
-                Ok(Self::Year(year))
+                let year = year.parse::<i16>().map_err(|_| invalid())?;
+                Self::from_year(year)
             }
             [year, month] => {
-                let year = year.parse::<i32>().map_err(|_| invalid())?;
-                let month = month.parse::<u32>().map_err(|_| invalid())?;
-                if !(1..=12).contains(&month) {
-                    return Err(invalid());
-                }
-                Ok(Self::YearMonth(year, month))
+                let year = year.parse::<i16>().map_err(|_| invalid())?;
+                let month = month.parse::<i8>().map_err(|_| invalid())?;
+
+                Self::from_year_month(year, month)
             }
             [year, month, day] => {
-                let year = year.parse::<i32>().map_err(|_| invalid())?;
-                let month = month.parse::<u32>().map_err(|_| invalid())?;
-                let day = day.parse::<u32>().map_err(|_| invalid())?;
+                let year = year.parse::<i16>().map_err(|_| invalid())?;
+                let month = month.parse::<i8>().map_err(|_| invalid())?;
+                let day = day.parse::<i8>().map_err(|_| invalid())?;
 
-                let date = NaiveDate::from_ymd_opt(year, month, day).ok_or_else(invalid)?;
+                let date = Date::new(year, month, day).map_err(|_| invalid())?;
 
-                Ok(Self::Full(date))
+                Self::from_date(date)
             }
 
             _ => Err(invalid()),
@@ -1258,10 +1265,10 @@ impl FromStr for DatePrecision {
 
 impl fmt::Display for DatePrecision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Year(year) => write!(f, "{year:04}"),
-            Self::YearMonth(year, month) => write!(f, "{year:04}-{month:02}"),
-            Self::Full(date) => write!(f, "{}", date.format("%Y-%m-%d")),
+        match self.precision {
+            Precision::Year => write!(f, "{:04}", self.date.year()),
+            Precision::YearMonth => write!(f, "{:04}-{:02}", self.date.year(), self.date.month()),
+            Precision::Day => write!(f, "{}", self.date),
         }
     }
 }
@@ -1624,7 +1631,7 @@ pub struct RecordMetadata {
     pub title: String,
     /// Publication date, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub publication_date: Option<Date>,
+    pub publication_date: Option<PublicationDate>,
     /// HTML description body, when present.
     #[serde(
         rename = "description",
@@ -1770,6 +1777,7 @@ mod tests {
         RecordIdentifier, RecordMetadata, RecordRelations, RecordVersionRelation,
         RelatedIdentifier, ResourceType, Subject, UploadType,
     };
+    use jiff::civil::Date;
     use serde_json::json;
 
     #[test]
@@ -2370,7 +2378,7 @@ mod tests {
 
         assert_eq!(
             metadata.publication_date,
-            Some(PublicationDate::Date(DatePrecision::YearMonth(2018, 9)))
+            Some(PublicationDate::Date(DatePrecision::from_year_month(2018, 9).unwrap()))
         );
 
         assert_eq!(metadata.dates[0].start.as_deref(), Some("2026-01-01"));
@@ -2394,28 +2402,27 @@ mod tests {
     fn publication_date_preserves_partial_precision() {
         let date: DatePrecision = "2018-09".parse().unwrap();
 
-        assert_eq!(date, DatePrecision::YearMonth(2018, 9));
+        assert_eq!(date, DatePrecision::from_year_month(2018, 9).unwrap());
         assert_eq!(date.year(), 2018);
         assert_eq!(date.month(), Some(9));
         assert_eq!(date.day(), None);
-        assert_eq!(date.try_naive(), None);
     }
 
     #[test]
     fn publication_date_parses_date_precisions() {
         assert_eq!(
             "2026".parse::<DatePrecision>().unwrap(),
-            DatePrecision::Year(2026)
+            DatePrecision::from_year(2026).unwrap()
         );
 
         assert_eq!(
             "2026-11".parse::<DatePrecision>().unwrap(),
-            DatePrecision::YearMonth(2026, 11)
+            DatePrecision::from_year_month(2026, 11)?
         );
 
         assert_eq!(
             "2026-11-06".parse::<DatePrecision>().unwrap(),
-            DatePrecision::Full(NaiveDate::from_ymd_opt(2026, 11, 6).unwrap())
+            DatePrecision::from_date(Date::new(2026, 11, 6).unwrap()).unwrap()
         );
     }
 
@@ -2424,24 +2431,24 @@ mod tests {
         assert_eq!(
             "1981/2024".parse::<PublicationDate>().unwrap(),
             PublicationDate::Interval {
-                start: DatePrecision::Year(1981),
-                end: DatePrecision::Year(2024),
+                start: DatePrecision::from_year(1981).unwrap(),
+                end: DatePrecision::from_year(2024).unwrap(),
             }
         );
 
         assert_eq!(
             "2024-06-19/2024-06-30".parse::<PublicationDate>().unwrap(),
             PublicationDate::Interval {
-                start: DatePrecision::Full(NaiveDate::from_ymd_opt(2024, 6, 19).unwrap()),
-                end: DatePrecision::Full(NaiveDate::from_ymd_opt(2024, 6, 30).unwrap()),
+                start: DatePrecision::from_date(Date::new(2024, 6, 19).unwrap()).unwrap(),
+                end: DatePrecision::from_date(Date::new(2024, 6, 30).unwrap()).unwrap(),
             }
         );
 
         assert_eq!(
             "1939-09-01/1945-09".parse::<PublicationDate>().unwrap(),
             PublicationDate::Interval {
-                start: DatePrecision::Full(NaiveDate::from_ymd_opt(1939, 9, 1).unwrap()),
-                end: DatePrecision::YearMonth(1945, 9),
+                start: DatePrecision::from_date(Date::new(1939, 9, 1).unwrap()).unwrap(),
+                end: DatePrecision::from_year_month(1945, 9).unwrap(),
             }
         );
     }
